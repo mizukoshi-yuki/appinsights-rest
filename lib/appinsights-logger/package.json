@@ -1,5 +1,5 @@
 {
-  "name": "appinsights-logger",
+  "name": "appinsights-rest",
   "version": "0.1.0",
   "description": "Application Insights REST API client for Nuxt4 and other modern frameworks",
   "main": "./dist/index.js",

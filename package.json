@@ -1,0 +1,29 @@
+{
+  "name": "appinsights-rest-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Application Insights REST API client for Nuxt4 and other modern frameworks",
+  "workspaces": [
+    "lib/appinsights-logger",
+    "playground"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=playground",
+    "build": "npm run build --workspace=lib/appinsights-logger",
+    "build:playground": "npm run build --workspace=playground"
+  },
+  "keywords": [
+    "application-insights",
+    "azure",
+    "telemetry",
+    "nuxt",
+    "nuxt4",
+    "monitoring"
+  ],
+  "author": "Yuki Antoinette",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mizukoshi-yuki/appinsights-rest.git"
+  }
+}

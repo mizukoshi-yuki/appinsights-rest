@@ -1,0 +1,52 @@
+{
+  "name": "appinsights-rest",
+  "version": "0.1.0",
+  "description": "Application Insights REST API client for Nuxt4 and other modern frameworks",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "application-insights",
+    "azure",
+    "telemetry",
+    "nuxt",
+    "nuxt4",
+    "monitoring",
+    "rest-api"
+  ],
+  "author": "Yuki Mizukoshi",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mizukoshi-yuki/appinsights-rest.git",
+    "directory": "lib/appinsights-rest"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.3.0"
+  },
+  "peerDependencies": {
+    "nuxt": "^4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "nuxt": {
+      "optional": true
+    }
+  }
+}

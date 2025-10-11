@@ -19,7 +19,7 @@
 
     <div class="section">
       <h2>About</h2>
-      <p>This is a test playground for the appinsights-logger library with Nuxt4.</p>
+      <p>This is a test playground for the appinsights-rest library with Nuxt4.</p>
       <p>Click the buttons above to send telemetry data to Application Insights.</p>
     </div>
   </div>

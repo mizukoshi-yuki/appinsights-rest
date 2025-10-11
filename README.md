@@ -254,7 +254,7 @@ This is a monorepo with the following structure:
 
 ```
 appinsights-rest/
-├── lib/appinsights-logger/    # Main library
+├── lib/appinsights-rest/       # Main library
 └── playground/                 # Nuxt 4 test application
 ```
 

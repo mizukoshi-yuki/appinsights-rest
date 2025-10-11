@@ -1,6 +1,6 @@
 {
   "name": "appinsights-rest",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Application Insights REST API client for Nuxt4 and other modern frameworks",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
@@ -10,10 +10,12 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.mjs",
       "require": "./dist/index.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
   "scripts": {
     "build": "tsup",

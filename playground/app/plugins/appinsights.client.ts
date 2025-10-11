@@ -1,5 +1,5 @@
 import { defineNuxtPlugin } from '#app'
-import { AppInsightsLogger } from 'appinsights-logger'
+import { AppInsightsLogger } from 'appinsights-rest'
 
 export default defineNuxtPlugin((nuxtApp) => {
   // Get connection string from runtime config

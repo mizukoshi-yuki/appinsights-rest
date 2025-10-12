@@ -1,6 +1,6 @@
 {
   "name": "appinsights-rest",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Application Insights REST API client for Nuxt4 and other modern frameworks",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
@@ -35,7 +35,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/mizukoshi-yuki/appinsights-rest.git",
+    "url": "git+https://github.com/mizukoshi-yuki/appinsights-rest.git",
     "directory": "lib/appinsights-rest"
   },
   "devDependencies": {

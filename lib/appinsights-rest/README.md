@@ -31,14 +31,14 @@ const logger = new AppInsightsLogger({
   appVersion: '1.0.0'
 })
 
-// Track an event
-await logger.trackEvent('user_login', {
+// Track an event (synchronous - queued for batching)
+logger.trackEvent('user_login', {
   userId: '123',
   method: 'oauth'
 })
 
-// Track a request
-await logger.trackRequest({
+// Track a request (synchronous - returns request ID)
+const requestId = logger.trackRequest({
   name: 'GET /api/users',
   url: 'https://example.com/api/users',
   duration: 150,
@@ -46,16 +46,16 @@ await logger.trackRequest({
   success: true
 })
 
-// Track an exception
+// Track an exception (synchronous - queued for batching)
 try {
   // some code
 } catch (error) {
-  await logger.trackException(error, {
+  logger.trackException(error, {
     context: 'user_registration'
   })
 }
 
-// Clean up when done
+// Clean up when done (async - waits for flush)
 await logger.dispose()
 ```
 
@@ -82,21 +82,21 @@ interface AppInsightsConfig {
 
 ### Tracking Methods
 
-#### `trackEvent(name, properties?)`
-Track custom events.
+#### `trackEvent(name, properties?): void`
+Track custom events. Synchronous - telemetry is queued and sent in batches.
 
 ```typescript
-await logger.trackEvent('button_clicked', {
+logger.trackEvent('button_clicked', {
   buttonId: 'submit',
   page: 'checkout'
 })
 ```
 
-#### `trackRequest(options)`
-Track HTTP requests.
+#### `trackRequest(options): string`
+Track HTTP requests. Returns the request ID. Synchronous - telemetry is queued and sent in batches.
 
 ```typescript
-const requestId = await logger.trackRequest({
+const requestId = logger.trackRequest({
   name: 'GET /api/users',
   url: 'https://example.com/api/users',
   duration: 150,            // in milliseconds
@@ -108,11 +108,11 @@ const requestId = await logger.trackRequest({
 })
 ```
 
-#### `trackDependency(options)`
-Track dependencies (external API calls, database queries, etc.).
+#### `trackDependency(options): string`
+Track dependencies (external API calls, database queries, etc.). Returns the dependency ID. Synchronous - telemetry is queued and sent in batches.
 
 ```typescript
-const dependencyId = await logger.trackDependency({
+const dependencyId = logger.trackDependency({
   name: 'GET external-api',
   data: 'https://api.example.com/data',
   type: 'HTTP',
@@ -123,21 +123,21 @@ const dependencyId = await logger.trackDependency({
 })
 ```
 
-#### `trackException(error, properties?)`
-Track exceptions and errors.
+#### `trackException(error, properties?): void`
+Track exceptions and errors. Synchronous - telemetry is queued and sent in batches.
 
 ```typescript
-await logger.trackException(new Error('Something went wrong'), {
+logger.trackException(new Error('Something went wrong'), {
   userId: '123',
   operation: 'checkout'
 })
 ```
 
-#### `trackTrace(message, severityLevel?, properties?)`
-Track trace messages.
+#### `trackTrace(message, severityLevel?, properties?): void`
+Track trace messages. Synchronous - telemetry is queued and sent in batches.
 
 ```typescript
-await logger.trackTrace('User authenticated', 1, {
+logger.trackTrace('User authenticated', 1, {
   userId: '123'
 })
 ```
@@ -149,17 +149,17 @@ Severity levels:
 - `3` - Error
 - `4` - Critical
 
-#### `trackMetric(name, value, properties?)`
-Track custom metrics.
+#### `trackMetric(name, value, properties?): void`
+Track custom metrics. Synchronous - telemetry is queued and sent in batches.
 
 ```typescript
-await logger.trackMetric('response_time', 245, {
+logger.trackMetric('response_time', 245, {
   endpoint: '/api/users'
 })
 ```
 
-#### `dispose()`
-Flush remaining telemetry and clean up resources. Always call this before your application exits.
+#### `dispose(): Promise<void>`
+Flush remaining telemetry and clean up resources. Async - waits for all telemetry to be sent. Always call this before your application exits.
 
 ```typescript
 await logger.dispose()
@@ -195,7 +195,7 @@ Pass correlation IDs in properties to link related telemetry:
 ```typescript
 const correlationId = generateGuid()
 
-await logger.trackRequest({
+logger.trackRequest({
   name: 'GET /api/users',
   url: 'https://example.com/api/users',
   duration: 150,
@@ -206,7 +206,7 @@ await logger.trackRequest({
   }
 })
 
-await logger.trackDependency({
+logger.trackDependency({
   name: 'Database Query',
   data: 'SELECT * FROM users',
   type: 'SQL',

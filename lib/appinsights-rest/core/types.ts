@@ -1,6 +1,6 @@
 // Core type definitions for Application Insights Logger
 
-export type Dict = Record<string, any>
+export type Dict = Record<string, unknown>
 
 export interface AppInsightsConfig {
   connectionString: string
@@ -17,7 +17,7 @@ export interface TelemetryEnvelope {
   tags?: Record<string, string>
   data: {
     baseType: string
-    baseData: any
+    baseData: Record<string, unknown>
   }
 }
 

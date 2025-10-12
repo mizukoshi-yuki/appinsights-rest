@@ -79,8 +79,9 @@ NUXT_PUBLIC_APPLICATIONINSIGHTS_CONNECTION_STRING=InstrumentationKey=xxx;Ingesti
 <script setup lang="ts">
 const { $appInsights } = useNuxtApp()
 
-const trackButtonClick = async () => {
-  await $appInsights.trackEvent('ButtonClicked', {
+const trackButtonClick = () => {
+  // trackEvent is synchronous - telemetry is queued and sent in batches
+  $appInsights.trackEvent('ButtonClicked', {
     page: 'home',
     timestamp: new Date().toISOString()
   })
@@ -101,23 +102,23 @@ const logger = new AppInsightsLogger({
   flushIntervalMs: 1000    // optional, default: 1000
 })
 
-// Track events
-await logger.trackEvent('UserLogin', { userId: '123' })
+// Track events (synchronous - queued for batching)
+logger.trackEvent('UserLogin', { userId: '123' })
 
-// Track exceptions
+// Track exceptions (synchronous - queued for batching)
 try {
   throw new Error('Something went wrong')
 } catch (error) {
-  await logger.trackException(error, { context: 'user-action' })
+  logger.trackException(error, { context: 'user-action' })
 }
 
-// Track traces (logs)
-await logger.trackTrace('Application started', 1, { environment: 'production' })
+// Track traces (logs) (synchronous - queued for batching)
+logger.trackTrace('Application started', 1, { environment: 'production' })
 
-// Track metrics
-await logger.trackMetric('ResponseTime', 245, { endpoint: '/api/users' })
+// Track metrics (synchronous - queued for batching)
+logger.trackMetric('ResponseTime', 245, { endpoint: '/api/users' })
 
-// Cleanup
+// Cleanup - flush all pending telemetry (async - waits for flush)
 await logger.dispose()
 ```
 
@@ -137,57 +138,57 @@ interface AppInsightsConfig {
 
 ### Methods
 
-#### `trackEvent(name: string, properties?: Dict)`
-Track custom events for business analytics.
+#### `trackEvent(name: string, properties?: Dict): void`
+Track custom events for business analytics. Synchronous - telemetry is queued and sent in batches.
 
 ```typescript
-await logger.trackEvent('PurchaseCompleted', {
+logger.trackEvent('PurchaseCompleted', {
   orderId: '12345',
   amount: 99.99,
   currency: 'USD'
 })
 ```
 
-#### `trackException(error: Error, properties?: Dict)`
-Track exceptions and errors.
+#### `trackException(error: Error, properties?: Dict): void`
+Track exceptions and errors. Synchronous - telemetry is queued and sent in batches.
 
 ```typescript
 try {
   // your code
 } catch (error) {
-  await logger.trackException(error, {
+  logger.trackException(error, {
     context: 'checkout-process',
     userId: currentUser.id
   })
 }
 ```
 
-#### `trackTrace(message: string, severityLevel?: number, properties?: Dict)`
-Track log messages.
+#### `trackTrace(message: string, severityLevel?: number, properties?: Dict): void`
+Track log messages. Synchronous - telemetry is queued and sent in batches.
 
 ```typescript
 // Severity levels: 0=Verbose, 1=Information, 2=Warning, 3=Error, 4=Critical
-await logger.trackTrace('User action completed', 1, {
+logger.trackTrace('User action completed', 1, {
   action: 'profile-update',
   duration: 120
 })
 ```
 
-#### `trackMetric(name: string, value: number, properties?: Dict)`
-Track custom metrics.
+#### `trackMetric(name: string, value: number, properties?: Dict): void`
+Track custom metrics. Synchronous - telemetry is queued and sent in batches.
 
 ```typescript
-await logger.trackMetric('PageLoadTime', 1234, {
+logger.trackMetric('PageLoadTime', 1234, {
   page: 'home',
   browser: 'chrome'
 })
 ```
 
-#### `trackRequest(options: TrackRequestOptions)`
-Track HTTP requests.
+#### `trackRequest(options: TrackRequestOptions): string`
+Track HTTP requests. Returns the request ID. Synchronous - telemetry is queued and sent in batches.
 
 ```typescript
-await logger.trackRequest({
+const requestId = logger.trackRequest({
   name: 'GET /api/users',
   url: 'https://example.com/api/users',
   duration: 245,
@@ -197,11 +198,11 @@ await logger.trackRequest({
 })
 ```
 
-#### `trackDependency(options: TrackDependencyOptions)`
-Track external dependencies (APIs, databases, etc.).
+#### `trackDependency(options: TrackDependencyOptions): string`
+Track external dependencies (APIs, databases, etc.). Returns the dependency ID. Synchronous - telemetry is queued and sent in batches.
 
 ```typescript
-await logger.trackDependency({
+const dependencyId = logger.trackDependency({
   name: 'GET https://api.external.com/data',
   data: 'https://api.external.com/data',
   type: 'HTTP',
@@ -213,8 +214,8 @@ await logger.trackDependency({
 })
 ```
 
-#### `dispose()`
-Flush all pending telemetry and cleanup resources.
+#### `dispose(): Promise<void>`
+Flush all pending telemetry and cleanup resources. Async - waits for all telemetry to be sent.
 
 ```typescript
 await logger.dispose()

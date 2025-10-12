@@ -5,6 +5,11 @@ import { createRequestId, createDependencyId, formatDuration } from './utils'
 
 const DEFAULT_BATCH = 16
 const DEFAULT_INTERVAL = 1000
+const DEFAULT_MAX_QUEUE_SIZE = 1000
+const RETRY_STATUS_CODE = 429
+const MIN_SERVER_ERROR = 500
+const INITIAL_BACKOFF_MS = 1000
+const MAX_BACKOFF_MS = 60000
 
 export class AppInsightsLogger {
   private ingestionEndpoint: string
@@ -16,10 +21,20 @@ export class AppInsightsLogger {
   private timer: NodeJS.Timeout | null = null
   private batchSize: number
   private flushIntervalMs: number
+  private maxQueueSize: number
   private retryUntil = 0
   private backoffMs = 0
+  private isFlushing = false
 
   constructor(config: AppInsightsConfig) {
+    // Validate config
+    if (config.batchSize !== undefined && config.batchSize < 1) {
+      throw new Error('batchSize must be >= 1')
+    }
+    if (config.flushIntervalMs !== undefined && config.flushIntervalMs < 0) {
+      throw new Error('flushIntervalMs must be >= 0')
+    }
+
     const parsed = this.parseConnectionString(config.connectionString)
     this.ingestionEndpoint = this.trimSlash(parsed.ingestionEndpoint)
     this.instrumentationKey = parsed.instrumentationKey
@@ -27,7 +42,12 @@ export class AppInsightsLogger {
     this.appVersion = config.appVersion
     this.batchSize = config.batchSize ?? DEFAULT_BATCH
     this.flushIntervalMs = config.flushIntervalMs ?? DEFAULT_INTERVAL
-    this.timer = setInterval(() => this.flush().catch(() => {}), this.flushIntervalMs)
+    this.maxQueueSize = DEFAULT_MAX_QUEUE_SIZE
+    this.timer = setInterval(() => {
+      this.flush().catch((error) => {
+        console.error('[AppInsights] Flush failed:', error)
+      })
+    }, this.flushIntervalMs)
   }
 
   dispose = async () => {
@@ -39,11 +59,11 @@ export class AppInsightsLogger {
   // Public track APIs
   // ----------------------
 
-  async trackEvent(name: string, properties?: Dict) {
+  trackEvent(name: string, properties?: Dict): void {
     const { tags } = this.buildTags(properties)
     const env: TelemetryEnvelope = {
       name: 'Microsoft.ApplicationInsights.Event',
-      time: new Date().toISOString(),
+      time: this.getTimestamp(),
       iKey: this.instrumentationKey,
       tags,
       data: {
@@ -54,12 +74,12 @@ export class AppInsightsLogger {
     this.enqueue(env)
   }
 
-  async trackRequest(opts: TrackRequestOptions) {
+  trackRequest(opts: TrackRequestOptions): string {
     const { tags } = this.buildTags(opts.properties)
     const requestId = opts.id ?? createRequestId((opts.properties?.correlationId as string | undefined))
     const env: TelemetryEnvelope = {
       name: 'Microsoft.ApplicationInsights.Request',
-      time: new Date().toISOString(),
+      time: this.getTimestamp(),
       iKey: this.instrumentationKey,
       tags: { ...tags, 'ai.operation.name': opts.name },
       data: {
@@ -80,12 +100,12 @@ export class AppInsightsLogger {
     return requestId
   }
 
-  async trackDependency(opts: TrackDependencyOptions) {
+  trackDependency(opts: TrackDependencyOptions): string {
     const { tags } = this.buildTags(opts.properties, opts.parentId)
     const dependencyId = opts.id ?? createDependencyId((opts.properties?.correlationId as string | undefined))
     const env: TelemetryEnvelope = {
       name: 'Microsoft.ApplicationInsights.RemoteDependency',
-      time: new Date().toISOString(),
+      time: this.getTimestamp(),
       iKey: this.instrumentationKey,
       tags,
       data: {
@@ -108,11 +128,11 @@ export class AppInsightsLogger {
     return dependencyId
   }
 
-  async trackException(error: Error, properties?: Dict) {
+  trackException(error: Error, properties?: Dict): void {
     const { tags } = this.buildTags(properties)
     const env: TelemetryEnvelope = {
       name: 'Microsoft.ApplicationInsights.Exception',
-      time: new Date().toISOString(),
+      time: this.getTimestamp(),
       iKey: this.instrumentationKey,
       tags,
       data: {
@@ -132,11 +152,11 @@ export class AppInsightsLogger {
     this.enqueue(env)
   }
 
-  async trackTrace(message: string, severityLevel: number = 1, properties?: Dict) {
+  trackTrace(message: string, severityLevel: number = 1, properties?: Dict): void {
     const { tags } = this.buildTags(properties)
     const env: TelemetryEnvelope = {
       name: 'Microsoft.ApplicationInsights.Message',
-      time: new Date().toISOString(),
+      time: this.getTimestamp(),
       iKey: this.instrumentationKey,
       tags,
       data: {
@@ -152,11 +172,11 @@ export class AppInsightsLogger {
     this.enqueue(env)
   }
 
-  async trackMetric(name: string, value: number, properties?: Dict) {
+  trackMetric(name: string, value: number, properties?: Dict): void {
     const { tags } = this.buildTags(properties)
     const env: TelemetryEnvelope = {
       name: 'Microsoft.ApplicationInsights.Metric',
-      time: new Date().toISOString(),
+      time: this.getTimestamp(),
       iKey: this.instrumentationKey,
       tags,
       data: {
@@ -175,21 +195,28 @@ export class AppInsightsLogger {
   // internals
   // ----------------------
 
-  private parseConnectionString(connectionString: string) {
+  private parseConnectionString(connectionString: string): { instrumentationKey: string; ingestionEndpoint: string } {
     const parts = connectionString.split(';')
-    const result: any = {}
+    const result: { instrumentationKey?: string; ingestionEndpoint?: string } = {}
     for (const part of parts) {
       const [key, value] = part.split('=')
       if (key === 'InstrumentationKey') result.instrumentationKey = value
       if (key === 'IngestionEndpoint') result.ingestionEndpoint = value
     }
-    if (!result.instrumentationKey || !result.ingestionEndpoint) {
-      throw new Error('Invalid APPLICATIONINSIGHTS_CONNECTION_STRING')
+    if (!result.instrumentationKey) {
+      throw new Error('Missing InstrumentationKey in connection string')
     }
-    return result
+    if (!result.ingestionEndpoint) {
+      throw new Error('Missing IngestionEndpoint in connection string')
+    }
+    return { instrumentationKey: result.instrumentationKey, ingestionEndpoint: result.ingestionEndpoint }
   }
 
   private trimSlash = (s: string) => s.replace(/\/+$/, '')
+
+  private getTimestamp(): string {
+    return new Date().toISOString()
+  }
 
   private getCommonTags() {
     const tags: Record<string, string> = {
@@ -210,40 +237,57 @@ export class AppInsightsLogger {
   }
 
   private enqueue(env: TelemetryEnvelope) {
+    if (this.queue.length >= this.maxQueueSize) {
+      console.warn('[AppInsights] Queue full, dropping oldest telemetry')
+      this.queue.shift()
+    }
     this.queue.push(env)
     if (this.queue.length >= this.batchSize) {
-      this.flush().catch(() => {})
+      this.flush().catch((error) => {
+        console.error('[AppInsights] Flush failed:', error)
+      })
     }
   }
 
   private async flush() {
-    if (this.queue.length === 0) return
+    if (this.isFlushing || this.queue.length === 0) return
     if (Date.now() < this.retryUntil) return
 
-    const batch = this.queue.splice(0, this.batchSize)
-    const url = `${this.ingestionEndpoint}/v2.1/track`
+    this.isFlushing = true
     try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(batch)
-      })
-      if (!response.ok) {
-        if (response.status === 429 || response.status >= 500) {
-          this.queue = batch.concat(this.queue)
-          this.backoffMs = Math.min(this.backoffMs ? this.backoffMs * 2 : 1000, 60000)
-          this.retryUntil = Date.now() + this.backoffMs
+      const batch = this.queue.splice(0, this.batchSize)
+      const url = `${this.ingestionEndpoint}/v2.1/track`
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(batch)
+        })
+        if (!response.ok) {
+          if (response.status === RETRY_STATUS_CODE || response.status >= MIN_SERVER_ERROR) {
+            this.queue = batch.concat(this.queue)
+            this.backoffMs = Math.min(this.backoffMs ? this.backoffMs * 2 : INITIAL_BACKOFF_MS, MAX_BACKOFF_MS)
+            this.retryUntil = Date.now() + this.backoffMs
+          } else {
+            const errorText = await response.text()
+            console.error('[AppInsights] Dropping batch due to client error:', {
+              status: response.status,
+              statusText: response.statusText,
+              error: errorText,
+              batchSize: batch.length
+            })
+          }
         } else {
-          console.error('[AppInsights] drop batch:', response.status, await response.text())
+          this.backoffMs = 0
+          this.retryUntil = 0
         }
-      } else {
-        this.backoffMs = 0
-        this.retryUntil = 0
+      } catch (error) {
+        this.queue = batch.concat(this.queue)
+        this.backoffMs = Math.min(this.backoffMs ? this.backoffMs * 2 : INITIAL_BACKOFF_MS, MAX_BACKOFF_MS)
+        this.retryUntil = Date.now() + this.backoffMs
       }
-    } catch {
-      this.queue = batch.concat(this.queue)
-      this.backoffMs = Math.min(this.backoffMs ? this.backoffMs * 2 : 1000, 60000)
-      this.retryUntil = Date.now() + this.backoffMs
+    } finally {
+      this.isFlushing = false
     }
   }
 }

@@ -6,7 +6,7 @@ import { getAppInsights } from './plugin'
 import { getRequestId } from './middleware'
 
 /**
- * x-cid付きロガー
+ * Logger with correlation ID support
  */
 export class CorrelatedLogger {
   constructor(private event: H3Event) {}
@@ -20,7 +20,7 @@ export class CorrelatedLogger {
   }
 
   /**
-   * 情報ログ
+   * Log information message
    */
   info(message: string, properties?: Record<string, any>) {
     console.log(`[${this.cid}] ${message}`)
@@ -31,7 +31,7 @@ export class CorrelatedLogger {
   }
 
   /**
-   * 警告ログ
+   * Log warning message
    */
   warn(message: string, properties?: Record<string, any>) {
     console.warn(`[${this.cid}] ${message}`)
@@ -42,7 +42,7 @@ export class CorrelatedLogger {
   }
 
   /**
-   * エラーログ
+   * Log error message
    */
   error(message: string, error?: Error, properties?: Record<string, any>) {
     console.error(`[${this.cid}] ${message}`, error)
@@ -62,7 +62,7 @@ export class CorrelatedLogger {
   }
 
   /**
-   * イベント記録
+   * Track custom event
    */
   trackEvent(name: string, properties?: Record<string, any>) {
     console.log(`[${this.cid}] Event: ${name}`)
@@ -73,7 +73,7 @@ export class CorrelatedLogger {
   }
 
   /**
-   * 依存関係（外部API呼び出し）の記録
+   * Track dependency (external API call, database query, etc.)
    */
   async trackDependency(options: {
     name: string
@@ -106,7 +106,7 @@ export class CorrelatedLogger {
   }
 
   /**
-   * メトリック記録
+   * Track metric
    */
   metric(name: string, value: number, properties?: Record<string, any>) {
     console.log(`[${this.cid}] Metric: ${name} = ${value}`)
@@ -118,7 +118,7 @@ export class CorrelatedLogger {
 }
 
 /**
- * イベントからロガーを取得
+ * Get logger from event
  */
 export function useLogger(event: H3Event): CorrelatedLogger {
   return new CorrelatedLogger(event)

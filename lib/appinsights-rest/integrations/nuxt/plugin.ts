@@ -47,7 +47,7 @@ export function createAppInsightsPlugin() {
       initializeAppInsights(connectionString)
       console.log('[AppInsights] ✓ REST API logger initialized successfully')
 
-      // 起動イベント
+      // Track server startup event
       getAppInsights()?.trackEvent('ServerStartup', {
         timestamp: new Date().toISOString(),
         nodeVersion: process.version,
@@ -55,7 +55,7 @@ export function createAppInsightsPlugin() {
       })
       console.log('[AppInsights] Startup event sent')
 
-      // 終了時にフラッシュ
+      // Flush telemetry on shutdown
       nitroApp.hooks.hook('close', async () => {
         try {
           await getAppInsights()?.dispose()
@@ -65,7 +65,7 @@ export function createAppInsightsPlugin() {
         }
       })
 
-      // エラーフック
+      // Error tracking hook
       nitroApp.hooks.hook('error', async (error, { event }) => {
         const logger = getAppInsights()
         if (!logger) return

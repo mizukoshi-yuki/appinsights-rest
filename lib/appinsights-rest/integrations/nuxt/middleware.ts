@@ -5,7 +5,7 @@ import { getOrCreateCorrelationId } from './correlation'
 import { getAppInsights } from './plugin'
 import { createRequestId } from '../../core/utils'
 
-// Request ID保存用のシンボルキー（外部からはgetRequestId()で参照）
+// Symbol key for storing request ID (accessible via getRequestId())
 const REQUEST_ID_KEY = Symbol('requestId')
 
 /**
@@ -18,7 +18,7 @@ export function createRequestTrackingMiddleware() {
     const method = event.method
     const url = getRequestURL(event).href
 
-    // Request Id を開始時に採番して保存（依存関係が parentId として直ちに参照可能）
+    // Generate and store request ID at the start (available as parentId for dependencies)
     const reqId = createRequestId(cid)
     ;(event.context as any)[REQUEST_ID_KEY] = reqId
 
@@ -51,8 +51,8 @@ export function createRequestTrackingMiddleware() {
 }
 
 /**
- * 現在のリクエストのRequest IDを取得
- * 依存関係トラッキング時にparentIdとして使用可能
+ * Get the current request's Request ID
+ * Can be used as parentId when tracking dependencies
  */
 export function getRequestId(event: any): string | undefined {
   return (event.context as any)?.[REQUEST_ID_KEY]

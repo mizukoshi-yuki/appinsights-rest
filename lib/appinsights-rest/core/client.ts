@@ -25,6 +25,7 @@ export class AppInsightsLogger {
   private retryUntil = 0
   private backoffMs = 0
   private isFlushing = false
+  private isDisposed = false
 
   constructor(config: AppInsightsConfig) {
     // Validate config
@@ -51,7 +52,13 @@ export class AppInsightsLogger {
   }
 
   dispose = async () => {
-    if (this.timer) clearInterval(this.timer)
+    if (this.isDisposed) return
+    this.isDisposed = true
+
+    if (this.timer) {
+      clearInterval(this.timer)
+      this.timer = null
+    }
     await this.flush()
   }
 
@@ -199,7 +206,8 @@ export class AppInsightsLogger {
     const parts = connectionString.split(';')
     const result: { instrumentationKey?: string; ingestionEndpoint?: string } = {}
     for (const part of parts) {
-      const [key, value] = part.split('=')
+      const [key, ...valueParts] = part.split('=')
+      const value = valueParts.join('=')
       if (key === 'InstrumentationKey') result.instrumentationKey = value
       if (key === 'IngestionEndpoint') result.ingestionEndpoint = value
     }
@@ -282,6 +290,7 @@ export class AppInsightsLogger {
           this.retryUntil = 0
         }
       } catch (error) {
+        console.error('[AppInsights] Network error during flush:', error)
         this.queue = batch.concat(this.queue)
         this.backoffMs = Math.min(this.backoffMs ? this.backoffMs * 2 : INITIAL_BACKOFF_MS, MAX_BACKOFF_MS)
         this.retryUntil = Date.now() + this.backoffMs

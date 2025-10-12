@@ -1,6 +1,6 @@
 {
   "name": "appinsights-rest",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Application Insights REST API client for Nuxt4 and other modern frameworks",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",

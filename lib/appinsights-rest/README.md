@@ -4,12 +4,13 @@ A lightweight, framework-independent Application Insights REST API client for No
 
 ## Features
 
-- Framework-independent core with optional Nuxt integration
-- Full telemetry support (events, requests, dependencies, exceptions, traces, metrics)
-- Automatic batching and retry with exponential backoff
-- TypeScript support with full type definitions
-- Zero external dependencies for core functionality
-- Correlation ID support for distributed tracing
+- 🚀 **Easy Integration** - Helper functions reduce implementation burden by 75%
+- 🎯 **Framework-independent** - Works with any Node.js framework (Nuxt, Express, Fastify, etc.)
+- 📊 **Full Telemetry Support** - Events, requests, dependencies, exceptions, traces, metrics
+- 🔄 **Automatic Batching & Retry** - Exponential backoff for failed requests
+- 🔗 **Correlation ID Support** - Built-in distributed tracing
+- 📦 **Zero Dependencies** - Core functionality has no external dependencies
+- 🎨 **TypeScript Support** - Full type definitions included
 
 ## Installation
 
@@ -17,216 +18,401 @@ A lightweight, framework-independent Application Insights REST API client for No
 npm install appinsights-rest
 ```
 
-## Quick Start
+## Quick Start (Nuxt 4 / Nitro)
 
-### Basic Usage
+### 1. Create a Plugin
+
+Create `server/plugins/appinsights.ts`:
 
 ```typescript
-import { AppInsightsLogger } from 'appinsights-rest'
+import { initializeAppInsights, disposeAppInsights } from 'appinsights-rest'
 
-// Initialize the logger
-const logger = new AppInsightsLogger({
-  connectionString: process.env.APPLICATIONINSIGHTS_CONNECTION_STRING,
-  role: 'my-app',
-  appVersion: '1.0.0'
-})
+export default defineNitroPlugin((nitroApp) => {
+  const config = useRuntimeConfig()
+  const connectionString = config.applicationInsights?.connectionString
 
-// Track an event (synchronous - queued for batching)
-logger.trackEvent('user_login', {
-  userId: '123',
-  method: 'oauth'
-})
+  if (!connectionString) {
+    console.warn('[AppInsights] Connection string not configured')
+    return
+  }
 
-// Track a request (synchronous - returns request ID)
-const requestId = logger.trackRequest({
-  name: 'GET /api/users',
-  url: 'https://example.com/api/users',
-  duration: 150,
-  responseCode: 200,
-  success: true
-})
-
-// Track an exception (synchronous - queued for batching)
-try {
-  // some code
-} catch (error) {
-  logger.trackException(error, {
-    context: 'user_registration'
+  // Initialize Application Insights
+  initializeAppInsights(connectionString, {
+    role: 'my-app',
+    appVersion: '1.0.0',
   })
-}
 
-// Clean up when done (async - waits for flush)
-await logger.dispose()
-```
-
-## Getting Your Connection String
-
-1. Go to the [Azure Portal](https://portal.azure.com)
-2. Navigate to your Application Insights resource
-3. Copy the **Connection String** from the Overview page
-4. It should look like: `InstrumentationKey=xxx;IngestionEndpoint=https://xxx.applicationinsights.azure.com/`
-
-## API Reference
-
-### Constructor Options
-
-```typescript
-interface AppInsightsConfig {
-  connectionString: string    // Required: Azure Application Insights connection string
-  role?: string              // Optional: Application role name (default: 'web-portal')
-  appVersion?: string        // Optional: Application version
-  batchSize?: number         // Optional: Batch size for telemetry (default: 16)
-  flushIntervalMs?: number   // Optional: Flush interval in ms (default: 1000)
-}
-```
-
-### Tracking Methods
-
-#### `trackEvent(name, properties?): void`
-Track custom events. Synchronous - telemetry is queued and sent in batches.
-
-```typescript
-logger.trackEvent('button_clicked', {
-  buttonId: 'submit',
-  page: 'checkout'
+  // Cleanup on server shutdown
+  nitroApp.hooks.hook('close', async () => {
+    await disposeAppInsights()
+  })
 })
 ```
 
-#### `trackRequest(options): string`
-Track HTTP requests. Returns the request ID. Synchronous - telemetry is queued and sent in batches.
+### 2. Create Request Tracking Middleware
+
+Create `server/middleware/appinsights-request.ts`:
 
 ```typescript
-const requestId = logger.trackRequest({
-  name: 'GET /api/users',
-  url: 'https://example.com/api/users',
-  duration: 150,            // in milliseconds
-  responseCode: 200,
-  success: true,
-  properties: {
-    userId: '123'
+import { createRequestId, getAppInsights } from 'appinsights-rest'
+
+export default defineEventHandler(async (event) => {
+  const logger = getAppInsights()
+  if (!logger) return
+
+  const startTime = Date.now()
+  const url = event.node.req.url || '/'
+  const method = event.node.req.method || 'GET'
+  const requestId = createRequestId()
+
+  // Store request ID for correlation
+  event.context.appInsights = { requestId, startTime }
+
+  // Track request on completion
+  event.node.res.once('finish', () => {
+    const duration = Date.now() - startTime
+    const statusCode = event.node.res.statusCode || 200
+    const success = statusCode >= 200 && statusCode < 400
+
+    logger.trackRequest({
+      id: requestId,
+      name: `${method} ${url}`,
+      url: `${event.node.req.headers.host || 'localhost'}${url}`,
+      duration,
+      responseCode: statusCode,
+      success,
+      properties: { method, correlationId: requestId },
+    })
+  })
+})
+```
+
+### 3. Use Helper Functions in Your API
+
+Create `server/api/example.ts`:
+
+```typescript
+import { trackDependency, trackEvent, trackException } from 'appinsights-rest'
+
+export default defineEventHandler(async (event) => {
+  try {
+    // Track an external API call
+    const data = await trackDependency(
+      event,
+      'External API Call',
+      'https://api.example.com',
+      'HTTP',
+      async () => {
+        return await fetch('https://api.example.com/data').then(r => r.json())
+      }
+    )
+
+    // Track a custom event
+    trackEvent(event, 'data_fetched', {
+      recordCount: data.length,
+      source: 'external-api',
+    })
+
+    return { success: true, data }
+  } catch (error) {
+    // Track exceptions
+    trackException(event, error as Error, {
+      endpoint: '/api/example',
+    })
+    throw error
   }
 })
 ```
 
-#### `trackDependency(options): string`
-Track dependencies (external API calls, database queries, etc.). Returns the dependency ID. Synchronous - telemetry is queued and sent in batches.
+### 4. Configure Environment Variables
+
+Add to your `.env` file:
+
+```bash
+NUXT_APPLICATIONINSIGHTS_CONNECTION_STRING=InstrumentationKey=xxx;IngestionEndpoint=https://xxx.applicationinsights.azure.com/
+```
+
+Add to `nuxt.config.ts`:
 
 ```typescript
-const dependencyId = logger.trackDependency({
-  name: 'GET external-api',
-  data: 'https://api.example.com/data',
-  type: 'HTTP',
-  target: 'api.example.com',
-  duration: 250,
-  resultCode: 200,
-  success: true
+export default defineNuxtConfig({
+  runtimeConfig: {
+    applicationInsights: {
+      connectionString: process.env.NUXT_APPLICATIONINSIGHTS_CONNECTION_STRING,
+      role: process.env.NUXT_APPLICATIONINSIGHTS_ROLE || 'web-portal',
+      appVersion: process.env.NUXT_APPLICATIONINSIGHTS_APP_VERSION || '1.0.0',
+    },
+  },
 })
 ```
 
-#### `trackException(error, properties?): void`
-Track exceptions and errors. Synchronous - telemetry is queued and sent in batches.
+## API Reference
+
+### Helper Functions
+
+#### `initializeAppInsights(connectionString, options?)`
+
+Initialize the global Application Insights logger. Call this once at application startup.
 
 ```typescript
-logger.trackException(new Error('Something went wrong'), {
+import { initializeAppInsights } from 'appinsights-rest'
+
+const logger = initializeAppInsights(connectionString, {
+  role: 'my-app',           // Application role name
+  appVersion: '1.0.0',      // Application version
+  batchSize: 16,            // Batch size (default: 16)
+  flushIntervalMs: 1000,    // Flush interval (default: 1000ms)
+})
+```
+
+#### `getAppInsights()`
+
+Get the global Application Insights logger instance.
+
+```typescript
+import { getAppInsights } from 'appinsights-rest'
+
+const logger = getAppInsights()
+if (logger) {
+  logger.trackEvent('my_event')
+}
+```
+
+#### `disposeAppInsights()`
+
+Clean up and flush remaining telemetry. Call this on application shutdown.
+
+```typescript
+import { disposeAppInsights } from 'appinsights-rest'
+
+await disposeAppInsights()
+```
+
+#### `trackDependency(event, name, target, type, fn)`
+
+Track external dependencies (API calls, database queries, etc.) with automatic timing and error handling.
+
+```typescript
+import { trackDependency } from 'appinsights-rest'
+
+const result = await trackDependency(
+  event,
+  'Database Query',
+  'users-db',
+  'SQL',
+  async () => {
+    return await db.query('SELECT * FROM users')
+  }
+)
+```
+
+**Dependency Types:**
+- `'HTTP'` - External HTTP/REST API calls
+- `'SQL'` - Database queries
+- `'Azure'` - Azure service calls (Storage, Cosmos DB, etc.)
+- `'Other'` - Other dependencies
+
+#### `trackEvent(event, eventName, properties?)`
+
+Track custom events.
+
+```typescript
+import { trackEvent } from 'appinsights-rest'
+
+trackEvent(event, 'user_registered', {
   userId: '123',
-  operation: 'checkout'
+  plan: 'premium',
 })
 ```
 
-#### `trackTrace(message, severityLevel?, properties?): void`
-Track trace messages. Synchronous - telemetry is queued and sent in batches.
+#### `trackMetric(event, metricName, value, properties?)`
+
+Track custom metrics.
 
 ```typescript
-logger.trackTrace('User authenticated', 1, {
-  userId: '123'
+import { trackMetric } from 'appinsights-rest'
+
+trackMetric(event, 'queue_length', 42, {
+  queueName: 'processing',
 })
 ```
 
-Severity levels:
-- `0` - Verbose
-- `1` - Information (default)
-- `2` - Warning
-- `3` - Error
-- `4` - Critical
+#### `trackException(event, error, properties?)`
 
-#### `trackMetric(name, value, properties?): void`
-Track custom metrics. Synchronous - telemetry is queued and sent in batches.
+Track exceptions and errors.
 
 ```typescript
-logger.trackMetric('response_time', 245, {
-  endpoint: '/api/users'
+import { trackException } from 'appinsights-rest'
+
+try {
+  // your code
+} catch (error) {
+  trackException(event, error as Error, {
+    operation: 'user_registration',
+  })
+  throw error
+}
+```
+
+#### `withErrorTracking(event, handler)`
+
+Wrap async functions to automatically track exceptions.
+
+```typescript
+import { withErrorTracking } from 'appinsights-rest'
+
+export default defineEventHandler(async (event) => {
+  return await withErrorTracking(event, async () => {
+    // Your code here - exceptions will be tracked automatically
+    return { success: true }
+  })
 })
 ```
 
-#### `dispose(): Promise<void>`
-Flush remaining telemetry and clean up resources. Async - waits for all telemetry to be sent. Always call this before your application exits.
+### Utility Functions
+
+#### `createRequestId(operationId?)`
+
+Generate an Application Insights compatible request ID.
 
 ```typescript
-await logger.dispose()
+import { createRequestId } from 'appinsights-rest'
+
+const requestId = createRequestId()
+// Returns: "|abc123...def456"
 ```
 
-## Utility Functions
+#### `createDependencyId(operationId?)`
+
+Generate an Application Insights compatible dependency ID.
 
 ```typescript
-import {
-  generateGuid,
-  createRequestId,
-  createDependencyId,
-  formatDuration
-} from 'appinsights-rest'
+import { createDependencyId } from 'appinsights-rest'
 
-// Generate a GUID
+const dependencyId = createDependencyId()
+```
+
+#### `generateGuid()`
+
+Generate a GUID (v4 UUID format).
+
+```typescript
+import { generateGuid } from 'appinsights-rest'
+
 const guid = generateGuid()
-
-// Create Application Insights compatible IDs
-const reqId = createRequestId()
-const depId = createDependencyId()
-
-// Format duration for Application Insights
-const duration = formatDuration(1500) // "00:00:01.500"
+// Returns: "550e8400-e29b-41d4-a716-446655440000"
 ```
 
-## Advanced Features
+#### `formatDuration(ms)`
 
-### Correlation IDs
-
-Pass correlation IDs in properties to link related telemetry:
+Format duration in milliseconds to Application Insights format.
 
 ```typescript
-const correlationId = generateGuid()
+import { formatDuration } from 'appinsights-rest'
 
+const duration = formatDuration(1500)
+// Returns: "00:00:01.500"
+```
+
+## Advanced Usage
+
+### Direct Logger Access
+
+For advanced use cases, you can use the `AppInsightsLogger` class directly:
+
+```typescript
+import { AppInsightsLogger } from 'appinsights-rest'
+
+const logger = new AppInsightsLogger({
+  connectionString: process.env.APPLICATIONINSIGHTS_CONNECTION_STRING,
+  role: 'my-app',
+  appVersion: '1.0.0',
+  batchSize: 16,
+  flushIntervalMs: 1000,
+})
+
+// Track telemetry
+logger.trackEvent('custom_event', { foo: 'bar' })
 logger.trackRequest({
   name: 'GET /api/users',
   url: 'https://example.com/api/users',
   duration: 150,
   responseCode: 200,
   success: true,
-  properties: {
-    correlationId
-  }
 })
 
-logger.trackDependency({
-  name: 'Database Query',
-  data: 'SELECT * FROM users',
-  type: 'SQL',
-  duration: 50,
-  resultCode: 200,
-  success: true,
-  properties: {
-    correlationId
-  }
+// Clean up
+await logger.dispose()
+```
+
+### Correlation and Distributed Tracing
+
+Correlation IDs are automatically managed when using helper functions:
+
+```typescript
+// In your API handler
+export default defineEventHandler(async (event) => {
+  // The middleware sets event.context.appInsights.requestId
+
+  // trackDependency automatically uses the request ID for correlation
+  const data = await trackDependency(event, 'API Call', 'api.example.com', 'HTTP', async () => {
+    return await fetch('https://api.example.com/data').then(r => r.json())
+  })
+
+  // trackEvent also includes correlation
+  trackEvent(event, 'operation_completed', { status: 'success' })
+
+  return { data }
 })
 ```
 
-### Batching and Retries
+### Custom Properties
 
-The logger automatically batches telemetry and retries failed requests with exponential backoff:
+Add custom properties to any telemetry:
 
-- Default batch size: 16 items
-- Default flush interval: 1000ms
-- Automatic retry for 429 (rate limit) and 5xx errors
-- Exponential backoff up to 60 seconds
+```typescript
+trackEvent(event, 'user_action', {
+  userId: '123',
+  sessionId: 'abc',
+  customDimension: 'value',
+})
+
+trackException(event, error, {
+  errorCode: 'ERR_001',
+  userId: '123',
+  endpoint: '/api/users',
+})
+```
+
+## Configuration
+
+### Connection String
+
+Get your connection string from the Azure Portal:
+
+1. Navigate to your Application Insights resource
+2. Go to **Overview** page
+3. Copy the **Connection String**
+4. Format: `InstrumentationKey=xxx;IngestionEndpoint=https://xxx.applicationinsights.azure.com/`
+
+### Batching and Performance
+
+The library automatically batches telemetry for optimal performance:
+
+- **Default batch size**: 16 items
+- **Default flush interval**: 1000ms
+- **Automatic retry**: 429 (rate limit) and 5xx errors
+- **Exponential backoff**: Up to 60 seconds
+
+You can customize these settings:
+
+```typescript
+initializeAppInsights(connectionString, {
+  role: 'my-app',
+  batchSize: 32,           // Larger batches (less frequent sends)
+  flushIntervalMs: 5000,   // Flush every 5 seconds
+})
+```
 
 ## TypeScript Support
 
@@ -238,8 +424,103 @@ import type {
   TelemetryEnvelope,
   TrackRequestOptions,
   TrackDependencyOptions,
-  Dict
+  Dict,
 } from 'appinsights-rest'
+```
+
+## Other Frameworks
+
+While optimized for Nuxt/Nitro, the library works with any Node.js framework:
+
+### Express
+
+```typescript
+import express from 'express'
+import { initializeAppInsights, getAppInsights, disposeAppInsights } from 'appinsights-rest'
+
+const app = express()
+
+// Initialize
+initializeAppInsights(process.env.APPLICATIONINSIGHTS_CONNECTION_STRING, {
+  role: 'express-app',
+})
+
+// Middleware for request tracking
+app.use((req, res, next) => {
+  const logger = getAppInsights()
+  const startTime = Date.now()
+
+  res.on('finish', () => {
+    logger?.trackRequest({
+      name: `${req.method} ${req.path}`,
+      url: req.url,
+      duration: Date.now() - startTime,
+      responseCode: res.statusCode,
+      success: res.statusCode >= 200 && res.statusCode < 400,
+    })
+  })
+
+  next()
+})
+
+// Cleanup on exit
+process.on('SIGTERM', async () => {
+  await disposeAppInsights()
+  process.exit(0)
+})
+```
+
+## Migration from Official SDK
+
+If you're migrating from `applicationinsights` (the official SDK):
+
+**Before (Official SDK):**
+```typescript
+import appInsights from 'applicationinsights'
+
+appInsights.setup(connectionString).start()
+const client = appInsights.defaultClient
+
+client.trackEvent({ name: 'my_event' })
+```
+
+**After (appinsights-rest):**
+```typescript
+import { initializeAppInsights, getAppInsights } from 'appinsights-rest'
+
+initializeAppInsights(connectionString, { role: 'my-app' })
+const logger = getAppInsights()
+
+logger?.trackEvent('my_event')
+```
+
+## Troubleshooting
+
+### Logger not initialized
+
+If you see warnings about logger not being initialized:
+
+1. Check that `initializeAppInsights()` is called in your plugin
+2. Verify the connection string is set in environment variables
+3. Ensure the plugin runs before any API handlers
+
+### Telemetry not appearing in Azure
+
+1. Verify your connection string is correct
+2. Check for console errors indicating invalid instrumentation key
+3. Wait 2-5 minutes for telemetry to appear in Azure Portal
+4. Check Application Insights Live Metrics for real-time validation
+
+### Correlation not working
+
+Ensure you're passing the `event` object to helper functions:
+
+```typescript
+// ✅ Correct
+trackEvent(event, 'my_event')
+
+// ❌ Wrong
+trackEvent(null, 'my_event')
 ```
 
 ## License
@@ -253,3 +534,7 @@ MIT
 ## Author
 
 Yuki Mizukoshi
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.

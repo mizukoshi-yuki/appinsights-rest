@@ -48,8 +48,9 @@ interface TrackAction {
 }
 
 // 4. composables
-const { $appInsights } = useNuxtApp()
-const logger = $appInsights as AppInsightsLogger | undefined
+// `$appInsights` is typed via `playground/app/types/nuxt.d.ts`, which
+// augments both `#app` and `vue`, so no runtime cast is needed here.
+const { $appInsights: logger } = useNuxtApp()
 
 // 5. refs
 const lastAction = ref<string | null>(null)

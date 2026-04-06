@@ -9,7 +9,12 @@ import type {
 } from './types'
 import { SeverityLevel } from './types'
 import { createRequestId, createDependencyId, formatDuration } from './utils'
-import pkg from '../package.json'
+
+// Injected at build time by tsup's `esbuildOptions.define` (and by vitest via
+// `vitest.config.ts`'s `define`). Avoids `import pkg from '../package.json'`,
+// which would otherwise inline the entire manifest — devDependencies, repo
+// URL, keywords, and all — into `dist/index.mjs`.
+declare const __SDK_VERSION__: string
 
 // -- defaults ---------------------------------------------------------
 const DEFAULT_BATCH_SIZE = 16 // envelopes per ingestion POST — balances latency vs payload size
@@ -26,7 +31,7 @@ const BACKOFF_GROWTH_FACTOR = 2
 
 // -- envelope schema --------------------------------------------------
 const APP_INSIGHTS_BASE_DATA_VER = 2 // App Insights base data schema version
-const SDK_VERSION = `custom-rest-api:${pkg.version}` // sourced from package.json — no drift
+const SDK_VERSION = __SDK_VERSION__ // injected by tsup / vitest — no package.json import
 
 const TRACK_PATH = '/v2.1/track'
 
@@ -76,11 +81,18 @@ function parseConnectionString(connectionString: string): ParsedConnectionString
     if (key === 'InstrumentationKey') instrumentationKey = value
     else if (key === 'IngestionEndpoint') ingestionEndpoint = value
   }
+  // Report only the missing field name — the full connection string contains
+  // the IngestionEndpoint (tenant URL) which should not be echoed into APM,
+  // log aggregation, or exception-tracking pipelines.
   if (!instrumentationKey) {
-    throw new Error(`AppInsightsLogger: missing InstrumentationKey in connection string: ${connectionString}`)
+    throw new Error(
+      'AppInsightsLogger: connection string is missing the InstrumentationKey field',
+    )
   }
   if (!ingestionEndpoint) {
-    throw new Error(`AppInsightsLogger: missing IngestionEndpoint in connection string: ${connectionString}`)
+    throw new Error(
+      'AppInsightsLogger: connection string is missing the IngestionEndpoint field',
+    )
   }
   return { instrumentationKey, ingestionEndpoint }
 }
@@ -95,6 +107,27 @@ function asStringOrUndefined(value: unknown): string | undefined {
 
 function readCorrelationId(properties: Dict | undefined): string | undefined {
   return asStringOrUndefined(properties?.correlationId)
+}
+
+// WEBSITE_INSTANCE_ID is set by Azure App Service / Functions to distinguish
+// deployment slots; this fallback keeps local / browser instances identifiable.
+const LOCAL_DEV_INSTANCE_ID = 'local-dev'
+
+/**
+ * Read the Azure App Service / Functions `WEBSITE_INSTANCE_ID` environment
+ * variable, falling back to {@link LOCAL_DEV_INSTANCE_ID} when it is unset.
+ *
+ * The `typeof process !== 'undefined'` guard is required because this
+ * library ships to browser runtimes as well: Vite does not statically replace
+ * `process.env.*` in library mode, and `process` itself is undefined on the
+ * browser side, so a bare `process.env.X` reference would throw a
+ * `ReferenceError` during construction.
+ */
+function readInstanceId(): string {
+  if (typeof process !== 'undefined' && process.env?.WEBSITE_INSTANCE_ID) {
+    return process.env.WEBSITE_INSTANCE_ID
+  }
+  return LOCAL_DEV_INSTANCE_ID
 }
 
 // ===================================================================
@@ -286,9 +319,7 @@ export class AppInsightsLogger {
   private buildCommonTags(): Readonly<Record<string, string>> {
     const tags: Record<string, string> = {
       [TAG.CloudRole]: this.cloudRole,
-      // WEBSITE_INSTANCE_ID is set by Azure App Service / Functions; the
-      // 'local-dev' fallback keeps local instances distinguishable in logs.
-      [TAG.CloudRoleInstance]: process.env.WEBSITE_INSTANCE_ID ?? 'local-dev',
+      [TAG.CloudRoleInstance]: readInstanceId(),
       [TAG.SdkVersion]: SDK_VERSION,
     }
     if (this.appVersion) tags[TAG.AppVersion] = this.appVersion
@@ -330,6 +361,11 @@ export class AppInsightsLogger {
   }
 
   private enqueue(envelope: TelemetryEnvelope): void {
+    // Silently drop telemetry after dispose — the flush timer has been
+    // cleared so anything enqueued here would never be sent, growing the
+    // queue unboundedly and masking a use-after-dispose bug upstream.
+    if (this.isDisposed) return
+
     if (this.queue.length >= this.maxQueueSize) {
       console.warn('[AppInsights] Queue full, dropping oldest telemetry')
       this.queue.shift()

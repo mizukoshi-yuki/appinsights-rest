@@ -523,6 +523,24 @@ trackEvent(event, 'my_event')
 trackEvent(null, 'my_event')
 ```
 
+## TypeScript configuration notes
+
+The library's `tsconfig.json` sets `"ignoreDeprecations": "6.0"` so that the
+build does not fail on deprecation warnings emitted by the DTS generation
+pass used during `tsup build`. The flag exists purely to keep the compiler
+quiet during bundling and has no effect on the emitted JavaScript or type
+definitions. Once the upstream tooling no longer surfaces those warnings,
+this flag can be removed without any behavioural change.
+
+```json
+{
+  "compilerOptions": {
+    "ignoreDeprecations": "6.0"
+    // ... other options
+  }
+}
+```
+
 ## License
 
 MIT

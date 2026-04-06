@@ -14,17 +14,51 @@ const MS_PER_HOUR = 60 * MS_PER_MINUTE
 const HHMMSS_PAD_WIDTH = 2 // hours/minutes/seconds are 2-digit zero-padded
 const MILLIS_PAD_WIDTH = 3 // milliseconds are 3-digit zero-padded
 
+// RFC 4122 v4 bit positions. Byte 6's high nibble is set to 0100 (version 4),
+// and byte 8's top two bits are set to 10 (variant 10, the RFC 4122 layout).
+// @see https://datatracker.ietf.org/doc/html/rfc4122#section-4.4
+const UUID_V4_BYTE_COUNT = 16
+const UUID_V4_VERSION_BYTE_INDEX = 6
+const UUID_V4_VARIANT_BYTE_INDEX = 8
+const UUID_V4_VERSION_MASK = 0x0f
+const UUID_V4_VERSION_BITS = 0x40
+const UUID_V4_VARIANT_MASK = 0x3f
+const UUID_V4_VARIANT_BITS = 0x80
+
 /**
- * Generate a UUID v4 using the Web Crypto API.
+ * Generate a UUID v4.
  *
- * Backed by `globalThis.crypto.randomUUID()`, which is available in
- * Node.js >= 19 (stable; experimental on 18) and every modern browser in a
- * secure (HTTPS) context. RFC 4122 v4 with cryptographic randomness.
+ * Prefers `globalThis.crypto.randomUUID()` when available — Node.js >= 19
+ * (stable) and every modern browser in a secure (HTTPS) context. For older
+ * runtimes and insecure-context browsers where `randomUUID` is missing, falls
+ * back to `crypto.getRandomValues()` with RFC 4122 bit manipulation so the
+ * library still returns a well-formed v4 UUID instead of throwing.
  *
  * @see https://developer.mozilla.org/en-US/docs/Web/API/Crypto/randomUUID
+ * @see https://datatracker.ietf.org/doc/html/rfc4122#section-4.4
  */
 export function generateGuid(): string {
-  return globalThis.crypto.randomUUID()
+  const webCrypto = globalThis.crypto
+  if (webCrypto && typeof webCrypto.randomUUID === 'function') {
+    return webCrypto.randomUUID()
+  }
+  return buildUuidV4FromRandomBytes()
+}
+
+/**
+ * Build a UUID v4 from 16 cryptographically random bytes, setting the version
+ * and variant bits per RFC 4122 section 4.4. Used as a fallback when the host
+ * environment does not expose `crypto.randomUUID()`.
+ */
+function buildUuidV4FromRandomBytes(): string {
+  const bytes = new Uint8Array(UUID_V4_BYTE_COUNT)
+  globalThis.crypto.getRandomValues(bytes)
+  bytes[UUID_V4_VERSION_BYTE_INDEX] =
+    ((bytes[UUID_V4_VERSION_BYTE_INDEX] ?? 0) & UUID_V4_VERSION_MASK) | UUID_V4_VERSION_BITS
+  bytes[UUID_V4_VARIANT_BYTE_INDEX] =
+    ((bytes[UUID_V4_VARIANT_BYTE_INDEX] ?? 0) & UUID_V4_VARIANT_MASK) | UUID_V4_VARIANT_BITS
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
 }
 
 /**

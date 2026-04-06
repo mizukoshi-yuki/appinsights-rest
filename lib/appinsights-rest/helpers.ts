@@ -1,71 +1,127 @@
 // Helper functions for Application Insights integration
 
 import { AppInsightsLogger } from './core/client'
-import type { AppInsightsConfig } from './core/types'
-import { createRequestId, createDependencyId } from './core/utils'
+import type {
+  AppInsightsConfig,
+  DependencyType,
+  Dict,
+  SeverityLevel,
+  TelemetryEventContext,
+} from './core/types'
+import { SeverityLevel as SeverityLevels } from './core/types'
+import { createDependencyId } from './core/utils'
 
-/**
- * Global Application Insights logger instance
- */
+// Default HTTP status codes recorded on dependency outcomes when the wrapped
+// call neither resolves with an HTTP-style result nor rejects with a typed
+// error. They are intentionally `200` / `500` to match how App Insights
+// classifies success vs failure in the portal.
+const DEFAULT_SUCCESS_STATUS = 200
+const DEFAULT_ERROR_STATUS = 500
+
+/** Global Application Insights logger instance (process-wide singleton). */
 let globalLogger: AppInsightsLogger | null = null
 
+// ===================================================================
+//  Lifecycle
+// ===================================================================
+
 /**
- * Initialize the global Application Insights logger
+ * Initialize the global Application Insights logger.
+ *
+ * Subsequent calls return the existing instance and emit a warning — call
+ * `disposeAppInsights()` first if you need to reinitialize.
  *
  * @example
  * ```typescript
- * // In server/plugins/appinsights.ts
+ * // server/plugins/appinsights.ts
+ * import { useRuntimeConfig } from '#imports'
+ * import { initializeAppInsights } from 'appinsights-rest'
+ *
  * export default defineNitroPlugin(() => {
  *   const config = useRuntimeConfig()
  *   initializeAppInsights(config.appInsights.connectionString, {
  *     role: 'my-app',
- *     appVersion: '1.0.0'
+ *     appVersion: '1.0.0',
  *   })
  * })
  * ```
  */
 export function initializeAppInsights(
   connectionString: string,
-  options?: Partial<Omit<AppInsightsConfig, 'connectionString'>>
+  options?: Partial<Omit<AppInsightsConfig, 'connectionString'>>,
 ): AppInsightsLogger {
   if (globalLogger) {
     console.warn('[AppInsights] Logger already initialized')
     return globalLogger
   }
-
-  globalLogger = new AppInsightsLogger({
-    connectionString,
-    role: options?.role,
-    appVersion: options?.appVersion,
-    batchSize: options?.batchSize,
-    flushIntervalMs: options?.flushIntervalMs,
-  })
-
+  globalLogger = new AppInsightsLogger({ connectionString, ...options })
   return globalLogger
 }
 
 /**
- * Get the global Application Insights logger instance
- * Returns null if not initialized
+ * Get the global Application Insights logger instance, or `null` if it has
+ * not been initialized yet.
  */
 export function getAppInsights(): AppInsightsLogger | null {
   return globalLogger
 }
 
 /**
- * Dispose the global Application Insights logger
- * Should be called on server shutdown
+ * Dispose the global Application Insights logger and flush remaining
+ * telemetry. Should be called on server shutdown.
  */
 export async function disposeAppInsights(): Promise<void> {
-  if (globalLogger) {
-    await globalLogger.dispose()
-    globalLogger = null
-  }
+  if (!globalLogger) return
+  await globalLogger.dispose()
+  globalLogger = null
+}
+
+// ===================================================================
+//  Correlation helpers (private)
+// ===================================================================
+
+/**
+ * Extract the request ID stored on `event.context.appInsights.requestId`.
+ * The request-tracking middleware (see README) sets this at the start of
+ * each request and tears it down on response finish.
+ */
+function extractCorrelationId(event: TelemetryEventContext): string | undefined {
+  return event.context?.appInsights?.requestId
 }
 
 /**
- * Track a dependency (external API call, database query, etc.)
- * Automatically handles timing, error tracking, and correlation
+ * Merge the request's correlation ID into a properties bag so it propagates
+ * down to the underlying envelope's `ai.operation.id` tag.
+ */
+function withCorrelation(event: TelemetryEventContext, properties?: Dict): Dict {
+  return { ...properties, correlationId: extractCorrelationId(event) }
+}
+
+/**
+ * Best-effort extraction of an HTTP-style status code from a thrown error.
+ * Recognises both `e.statusCode` (h3, fetch wrappers) and
+ * `e.response.status` (axios). Falls back to {@link DEFAULT_ERROR_STATUS}
+ * when neither is present.
+ */
+function extractErrorStatusCode(err: unknown): number {
+  const candidate = err as { statusCode?: unknown; response?: { status?: unknown } } | null
+  if (typeof candidate?.statusCode === 'number') return candidate.statusCode
+  if (typeof candidate?.response?.status === 'number') return candidate.response.status
+  return DEFAULT_ERROR_STATUS
+}
+
+// ===================================================================
+//  Tracking helpers
+// ===================================================================
+
+/**
+ * Track a dependency (external API call, database query, etc.) with
+ * automatic timing, error classification, and correlation propagation.
+ *
+ * The wrapped `fn` is awaited; on success the resulting telemetry records
+ * status {@link DEFAULT_SUCCESS_STATUS}; on failure it records the error's
+ * status code (or {@link DEFAULT_ERROR_STATUS} as a fallback) and re-throws
+ * so callers see the original error.
  *
  * @example
  * ```typescript
@@ -75,48 +131,37 @@ export async function disposeAppInsights(): Promise<void> {
  *     'GET users API',
  *     'api.example.com',
  *     'HTTP',
- *     async () => {
- *       return await $fetch('https://api.example.com/users')
- *     }
+ *     async () => $fetch('https://api.example.com/users'),
  *   )
  * })
  * ```
  */
 export async function trackDependency<T>(
-  event: any,
+  event: TelemetryEventContext,
   name: string,
   target: string,
-  type: 'HTTP' | 'SQL' | 'Azure' | 'Other',
-  fn: () => Promise<T>
+  type: DependencyType,
+  fn: () => Promise<T>,
 ): Promise<T> {
   const logger = getAppInsights()
-  if (!logger) {
-    return await fn()
-  }
+  if (!logger) return await fn()
 
   const startTime = Date.now()
-  const correlationId = event.context?.appInsights?.requestId
+  const correlationId = extractCorrelationId(event)
   const dependencyId = createDependencyId(correlationId)
 
   let success = true
-  let resultCode = 200
-  let error: Error | null = null
+  let resultCode = DEFAULT_SUCCESS_STATUS
+  let errorMessage: string | undefined
 
   try {
-    const result = await fn()
-    return result
+    return await fn()
   } catch (err) {
     success = false
-    error = err instanceof Error ? err : new Error(String(err))
-
-    // Extract status code from common error formats
-    const e = err as { statusCode?: number; response?: { status?: number } }
-    resultCode = e?.statusCode || e?.response?.status || 500
-
+    resultCode = extractErrorStatusCode(err)
+    errorMessage = err instanceof Error ? err.message : String(err)
     throw err
   } finally {
-    const duration = Date.now() - startTime
-
     logger.trackDependency({
       id: dependencyId,
       parentId: correlationId,
@@ -124,19 +169,19 @@ export async function trackDependency<T>(
       data: target,
       type,
       target,
-      duration,
+      duration: Date.now() - startTime,
       resultCode,
       success,
       properties: {
         correlationId,
-        error: error?.message,
+        error: errorMessage,
       },
     })
   }
 }
 
 /**
- * Track a custom event
+ * Track a custom event with automatic correlation propagation.
  *
  * @example
  * ```typescript
@@ -144,23 +189,17 @@ export async function trackDependency<T>(
  * ```
  */
 export function trackEvent(
-  event: any,
+  event: TelemetryEventContext,
   eventName: string,
-  properties?: Record<string, unknown>
+  properties?: Dict,
 ): void {
   const logger = getAppInsights()
   if (!logger) return
-
-  const correlationId = event.context?.appInsights?.requestId
-
-  logger.trackEvent(eventName, {
-    ...properties,
-    correlationId,
-  })
+  logger.trackEvent(eventName, withCorrelation(event, properties))
 }
 
 /**
- * Track a metric
+ * Track a custom metric with automatic correlation propagation.
  *
  * @example
  * ```typescript
@@ -168,53 +207,62 @@ export function trackEvent(
  * ```
  */
 export function trackMetric(
-  event: any,
+  event: TelemetryEventContext,
   metricName: string,
   value: number,
-  properties?: Record<string, unknown>
+  properties?: Dict,
 ): void {
   const logger = getAppInsights()
   if (!logger) return
-
-  const correlationId = event.context?.appInsights?.requestId
-
-  logger.trackMetric(metricName, value, {
-    ...properties,
-    correlationId,
-  })
+  logger.trackMetric(metricName, value, withCorrelation(event, properties))
 }
 
 /**
- * Track an exception
+ * Track an exception with automatic correlation propagation.
  *
  * @example
  * ```typescript
  * try {
  *   // ...
  * } catch (error) {
- *   trackException(event, error)
+ *   trackException(event, error as Error)
  *   throw error
  * }
  * ```
  */
 export function trackException(
-  event: any,
+  event: TelemetryEventContext,
   error: Error,
-  properties?: Record<string, unknown>
+  properties?: Dict,
 ): void {
   const logger = getAppInsights()
   if (!logger) return
-
-  const correlationId = event.context?.appInsights?.requestId
-
-  logger.trackException(error, {
-    ...properties,
-    correlationId,
-  })
+  logger.trackException(error, withCorrelation(event, properties))
 }
 
 /**
- * Wrap a handler function with automatic error tracking
+ * Track a trace (log) message with automatic correlation propagation.
+ * Severity defaults to {@link SeverityLevel.Information}.
+ *
+ * @example
+ * ```typescript
+ * trackTrace(event, 'cache miss', SeverityLevel.Warning, { key })
+ * ```
+ */
+export function trackTrace(
+  event: TelemetryEventContext,
+  message: string,
+  severityLevel: SeverityLevel = SeverityLevels.Information,
+  properties?: Dict,
+): void {
+  const logger = getAppInsights()
+  if (!logger) return
+  logger.trackTrace(message, severityLevel, withCorrelation(event, properties))
+}
+
+/**
+ * Wrap a handler with automatic exception tracking. Any thrown error is
+ * recorded with the request path and method, then re-thrown.
  *
  * @example
  * ```typescript
@@ -227,8 +275,8 @@ export function trackException(
  * ```
  */
 export async function withErrorTracking<T>(
-  event: any,
-  handler: () => Promise<T>
+  event: TelemetryEventContext,
+  handler: () => Promise<T>,
 ): Promise<T> {
   try {
     return await handler()
